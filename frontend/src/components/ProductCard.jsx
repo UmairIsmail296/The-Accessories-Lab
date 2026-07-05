@@ -58,7 +58,7 @@ const ProductCard = ({ product }) => {
         className={`card-style group cursor-pointer opacity-0 animate-fadeInUp relative hover-lift ${
           theme === 'dark' ? 'hover:shadow-xl hover:shadow-primary/10' : 'hover:shadow-xl hover:shadow-gray-300/50'
         }`}
-        onClick={() => navigate(`/product/${product._id}`)}
+        onClick={() => navigate(`/showcase/${product._id}`)}
       >
         {/* Image Section */}
         <div className={`relative overflow-hidden aspect-square ${

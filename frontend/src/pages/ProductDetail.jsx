@@ -15,6 +15,8 @@ const ProductDetail = () => {
   const [quantity, setQuantity] = useState(1);
   const [currentImage, setCurrentImage] = useState(0);
   const [selectedColor, setSelectedColor] = useState('');
+  const [selectedColorVariant, setSelectedColorVariant] = useState(null);
+  const [displayImages, setDisplayImages] = useState([]);
   const [addingToCart, setAddingToCart] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [showNotifyPopup, setShowNotifyPopup] = useState(false);
@@ -28,13 +30,27 @@ const ProductDetail = () => {
     window.scrollTo(0, 0);
   }, [id]);
 
+  useEffect(() => {
+    if (product) {
+      // If has color variants, use first variant's images
+      if (product.colorVariants && product.colorVariants.length > 0) {
+        setSelectedColorVariant(product.colorVariants[0]);
+        setDisplayImages(product.colorVariants[0].images || []);
+        setSelectedColor(product.colorVariants[0].colorName);
+      } else {
+        // Fallback to default images
+        setDisplayImages(product.images || (product.image ? [product.image] : []));
+        if (product.colors && product.colors.length > 0) {
+          setSelectedColor(product.colors[0]);
+        }
+      }
+    }
+  }, [product]);
+
   const fetchProduct = async () => {
     try {
       const { data } = await axios.get(`/api/products/${id}`);
       setProduct(data);
-      if (data.colors && data.colors.length > 0) {
-        setSelectedColor(data.colors[0]);
-      }
 
       if (user) {
         try {
@@ -48,6 +64,15 @@ const ProductDetail = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Change color variant
+  const handleColorChange = (variant) => {
+    setSelectedColorVariant(variant);
+    setSelectedColor(variant.colorName);
+    setDisplayImages(variant.images || []);
+    setCurrentImage(0);
+    setImageLoaded(false);
   };
 
   const handleAddToCart = async () => {
@@ -102,13 +127,17 @@ const ProductDetail = () => {
 
   if (!product) return null;
 
-  const images = product.images && product.images.length > 0
-    ? product.images
-    : product.image ? [product.image] : [];
+  const images = displayImages.length > 0
+    ? displayImages
+    : (product.images && product.images.length > 0
+        ? product.images
+        : product.image ? [product.image] : []);
 
   const specs = product.specifications
     ? product.specifications.split('|').map((s) => s.trim()).filter(Boolean)
     : [];
+
+  const hasColorVariants = product.colorVariants && product.colorVariants.length > 0;
 
   return (
     <div className={`min-h-screen pt-20 pb-12 ${theme === 'dark' ? 'bg-[#0a0a0f]' : 'bg-[#f5f5f7]'}`}>
@@ -131,6 +160,7 @@ const ProductDetail = () => {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 lg:gap-16">
           {/* LEFT - Image Gallery */}
           <div className="animate-fadeInLeft">
+            {/* Main Image */}
             <div className={`relative rounded-3xl overflow-hidden aspect-square mb-4 ${
               theme === 'dark' ? 'bg-[#12122a]' : 'bg-white shadow-lg'
             }`}>
@@ -167,6 +197,19 @@ const ProductDetail = () => {
                 </span>
               )}
 
+              {/* Color Badge on Image */}
+              {selectedColorVariant && !product.isSoldOut && (
+                <div className={`absolute bottom-4 left-4 backdrop-blur-md px-4 py-2 rounded-full flex items-center gap-2 shadow-lg ${
+                  theme === 'dark' ? 'bg-black/60' : 'bg-white/80'
+                }`}>
+                  <div className="w-4 h-4 rounded-full border-2 border-white shadow"
+                    style={{ background: selectedColorVariant.colorHex }}></div>
+                  <span className={`text-xs font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                    {selectedColorVariant.colorName}
+                  </span>
+                </div>
+              )}
+
               {images.length > 1 && !product.isSoldOut && (
                 <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur-md text-white text-xs font-bold px-3 py-1.5 rounded-full">
                   {currentImage + 1} / {images.length}
@@ -187,6 +230,7 @@ const ProductDetail = () => {
               )}
             </div>
 
+            {/* Thumbnails */}
             {images.length > 1 && (
               <div className="flex gap-3 overflow-x-auto pb-2 image-slider">
                 {images.map((img, index) => (
@@ -233,12 +277,7 @@ const ProductDetail = () => {
                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                 <span className="text-green-500 text-sm font-bold">In Stock ({product.stock} available)</span>
               </div>
-            ) : (
-              <div className="inline-flex items-center gap-2 mb-4">
-                <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                <span className="text-red-500 text-sm font-bold">Out of Stock</span>
-              </div>
-            )}
+            ) : null}
 
             <div className="mb-6">
               <div className="flex items-baseline gap-3">
@@ -279,7 +318,63 @@ const ProductDetail = () => {
               </div>
             )}
 
-            {product.colors && product.colors.length > 0 && (
+            {/* ✅ COLOR VARIANTS with Images */}
+            {hasColorVariants && (
+              <div className="mb-8">
+                <h3 className={`text-lg font-bold mb-3 flex items-center gap-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                  <span className="w-1 h-5 bg-primary rounded-full"></span>
+                  Available Colors
+                </h3>
+                <div className="flex flex-wrap gap-3">
+                  {product.colorVariants.map((variant) => (
+                    <button
+                      key={variant.colorName}
+                      onClick={() => handleColorChange(variant)}
+                      disabled={product.isSoldOut}
+                      className={`group flex items-center gap-3 px-5 py-3 rounded-xl border-2 transition-all duration-300 ${
+                        product.isSoldOut ? 'opacity-50 cursor-not-allowed' : ''
+                      } ${
+                        selectedColor === variant.colorName
+                          ? 'border-primary bg-primary/10 shadow-lg shadow-primary/20 scale-105'
+                          : theme === 'dark'
+                            ? 'border-gray-700 bg-[#12122a] hover:border-primary'
+                            : 'border-gray-200 bg-white hover:border-primary shadow-sm'
+                      }`}
+                    >
+                      <div className={`w-8 h-8 rounded-full border-2 transition-all ${
+                        selectedColor === variant.colorName ? 'border-primary scale-110' : 'border-white'
+                      }`}
+                        style={{
+                          background: variant.colorHex || '#6b7280',
+                          boxShadow: `0 4px 12px ${variant.colorHex}40`,
+                        }}></div>
+                      <span className={`font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                        {variant.colorName}
+                      </span>
+                      {selectedColor === variant.colorName && (
+                        <span className="text-primary text-sm">✓</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+
+                {selectedColorVariant && !product.isSoldOut && (
+                  <div className={`mt-3 p-3 rounded-lg ${
+                    theme === 'dark' ? 'bg-primary/10 border border-primary/30' : 'bg-primary/5 border border-primary/20'
+                  }`}>
+                    <p className={`text-sm ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
+                      Selected: <span className="text-primary font-bold">{selectedColor}</span>
+                      <span className={`ml-2 text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-500'}`}>
+                        ({selectedColorVariant.images?.length || 0} images)
+                      </span>
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Fallback: Old products with just colors array */}
+            {!hasColorVariants && product.colors && product.colors.length > 0 && (
               <div className="mb-8">
                 <h3 className={`text-lg font-bold mb-3 flex items-center gap-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
                   <span className="w-1 h-5 bg-primary rounded-full"></span>
@@ -292,8 +387,6 @@ const ProductDetail = () => {
                       onClick={() => setSelectedColor(color)}
                       disabled={product.isSoldOut}
                       className={`px-5 py-2.5 rounded-xl text-sm font-bold transition-all duration-300 ${
-                        product.isSoldOut ? 'opacity-50 cursor-not-allowed' : ''
-                      } ${
                         selectedColor === color
                           ? 'bg-primary text-white shadow-lg shadow-primary/30 scale-105'
                           : theme === 'dark'
@@ -339,36 +432,22 @@ const ProductDetail = () => {
                     <h3 className="text-red-500 font-black text-xl mb-2">Currently Sold Out</h3>
                     <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
                       This product is temporarily unavailable.
-                      <br />
-                      Get notified when it's back in stock!
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => setShowNotifyPopup(true)}
+                  <button onClick={() => setShowNotifyPopup(true)}
                     className="w-full text-lg py-4 rounded-2xl font-black transition-all duration-500 bg-gradient-to-r from-orange-500 to-red-500 hover:from-red-500 hover:to-orange-500 text-white hover:shadow-xl hover:shadow-orange-500/30 hover:scale-[1.02] active:scale-95"
                   >🔔 Notify Me When Available</button>
 
-                  <button
-                    onClick={() => navigate(-1)}
+                  <button onClick={() => navigate(-1)}
                     className={`w-full text-lg py-4 rounded-2xl font-bold transition-all duration-300 ${
                       theme === 'dark' ? 'bg-[#12122a] text-white border-2 border-gray-700 hover:bg-white/5' : 'bg-white text-gray-700 border-2 border-gray-200 hover:bg-gray-50 shadow-sm'
                     }`}
                   >← Continue Shopping</button>
-
-                  {product.notifySubscribers && product.notifySubscribers.length > 0 && (
-                    <div className={`text-center text-sm py-3 rounded-xl ${
-                      theme === 'dark' ? 'bg-[#12122a] text-gray-400' : 'bg-gray-50 text-gray-500'
-                    }`}>
-                      🔔 <span className="text-primary font-bold">{product.notifySubscribers.length}</span> {product.notifySubscribers.length === 1 ? 'person is' : 'people are'} waiting
-                    </div>
-                  )}
                 </>
               ) : (
                 <>
-                  <button
-                    onClick={handleAddToCart}
-                    disabled={addingToCart || product.stock === 0}
+                  <button onClick={handleAddToCart} disabled={addingToCart || product.stock === 0}
                     className={`w-full text-lg py-4 rounded-2xl font-black transition-all duration-500 ${
                       product.stock === 0 ? 'bg-gray-500 text-white cursor-not-allowed'
                         : addingToCart ? 'bg-green-500 text-white scale-[1.02]'
@@ -378,9 +457,7 @@ const ProductDetail = () => {
                     {product.stock === 0 ? 'Out of Stock' : addingToCart ? '✓ Added to Cart!' : `🛒 Add to Cart — Rs. ${(product.price * quantity).toLocaleString()}`}
                   </button>
 
-                  <button
-                    onClick={handleBuyNow}
-                    disabled={addingToCart || product.stock === 0}
+                  <button onClick={handleBuyNow} disabled={addingToCart || product.stock === 0}
                     className={`w-full text-lg py-4 rounded-2xl font-bold transition-all duration-300 ${
                       product.stock === 0 ? 'opacity-50 cursor-not-allowed'
                         : theme === 'dark' ? 'bg-[#12122a] text-white border-2 border-primary hover:bg-primary/10' : 'bg-white text-primary border-2 border-primary hover:bg-primary/5 shadow-sm'
@@ -411,7 +488,7 @@ const ProductDetail = () => {
 
             <div className="mt-6 grid grid-cols-2 gap-3">
               <a
-                href={`https://wa.me/923427600786?text=${encodeURIComponent(`Hi! I'm interested in: ${product.name} - Rs. ${product.price.toLocaleString()}${product.isSoldOut ? ' (Currently Sold Out)' : ''} - ${window.location.href}`)}`}
+                href={`https://wa.me/923427600786?text=${encodeURIComponent(`Hi! I'm interested in: ${product.name}${selectedColor ? ' (' + selectedColor + ')' : ''} - Rs. ${product.price.toLocaleString()}`)}`}
                 target="_blank" rel="noopener noreferrer"
                 className="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 text-sm"
               >
