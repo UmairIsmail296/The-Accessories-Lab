@@ -5,51 +5,43 @@ cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true,
 });
 
-// Storage for Product Images
+console.log('Cloudinary Config:');
+console.log('- Cloud Name:', process.env.CLOUDINARY_CLOUD_NAME ? '✅' : '❌');
+console.log('- API Key:', process.env.CLOUDINARY_API_KEY ? '✅' : '❌');
+
+// Storage for Product Images - ALL FORMATS ALLOWED
 const productStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'the-accessories-lab/products',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-    transformation: [
-      { width: 1200, height: 1200, crop: 'limit' },
-      { quality: 'auto:good' },
-      { fetch_format: 'auto' },
-    ],
+    folder: 'accessories-lab/products',
+    // ✅ Include AVIF and all formats
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif', 'bmp', 'svg', 'heic', 'heif', 'tiff'],
+    // Optional: Auto-convert AVIF to WebP for better browser support
+    // transformation: [{ fetch_format: 'auto', quality: 'auto:good' }],
   },
 });
 
-// Storage for Profile Pictures
 const profileStorage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'the-accessories-lab/profiles',
-    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-    transformation: [
-      { width: 500, height: 500, crop: 'fill', gravity: 'face' },
-      { quality: 'auto:good' },
-      { fetch_format: 'auto' },
-    ],
+    folder: 'accessories-lab/profiles',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'gif', 'avif'],
   },
 });
 
-// Delete image from Cloudinary
 const deleteImage = async (imageUrl) => {
   if (!imageUrl || !imageUrl.includes('cloudinary')) return;
-
   try {
-    // Extract public_id from URL
     const parts = imageUrl.split('/');
     const filename = parts[parts.length - 1].split('.')[0];
     const folder = parts[parts.length - 2];
-    const publicId = `the-accessories-lab/${folder}/${filename}`;
-
+    const publicId = `accessories-lab/${folder}/${filename}`;
     await cloudinary.uploader.destroy(publicId);
-    console.log(`✅ Deleted image: ${publicId}`);
   } catch (error) {
-    console.error('❌ Error deleting image:', error.message);
+    console.error('Delete error:', error.message);
   }
 };
 

@@ -1,25 +1,18 @@
 const Product = require('../models/Product');
-const nodemailer = require('nodemailer');
+const path = require('path');
 
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
-  secure: false,
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
+// Get all products
 exports.getAllProducts = async (req, res) => {
   try {
     const products = await Product.find({ isActive: true }).sort({ createdAt: -1 });
     res.json(products);
   } catch (error) {
+    console.error('Get products error:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
+// Get by category
 exports.getProductsByCategory = async (req, res) => {
   try {
     const { category } = req.params;
@@ -30,6 +23,7 @@ exports.getProductsByCategory = async (req, res) => {
   }
 };
 
+// Get single product
 exports.getProductById = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
@@ -42,206 +36,407 @@ exports.getProductById = async (req, res) => {
   }
 };
 
-// Create product - Cloudinary URLs
-exports.createProduct = async (req, res) => {
-  try {
-    const { name, description, price, category, brand, stock, specifications, colors } = req.body;
-
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ message: 'Please upload at least one image' });
-    }
-
-    // Cloudinary returns URL in file.path
-    const imagePaths = req.files.map((file) => file.path);
-
-    let colorsArray = [];
-    if (colors) {
-      try {
-        colorsArray = typeof colors === 'string' ? JSON.parse(colors) : colors;
-      } catch (e) {
-        colorsArray = colors.split(',').map(c => c.trim()).filter(Boolean);
-      }
-    }
-
-    const product = await Product.create({
-      name,
-      description,
-      price: Number(price),
-      category,
-      brand: brand || '',
-      specifications: specifications || '',
-      colors: colorsArray,
-      stock: stock ? Number(stock) : 10,
-      image: imagePaths[0],
-      images: imagePaths,
-      isSoldOut: false,
-    });
-
-    const io = req.app.get('io');
-    io.emit('product_added', product);
-
-    res.status(201).json(product);
-  } catch (error) {
-    console.error('Create product error:', error);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-// Update product - Cloudinary URLs
-exports.updateProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
-
-    const { name, description, price, category, brand, stock, specifications, colors, existingImages } = req.body;
-
-    product.name = name || product.name;
-    product.description = description || product.description;
-    product.price = price ? Number(price) : product.price;
-    product.category = category || product.category;
-    product.brand = brand !== undefined ? brand : product.brand;
-    product.specifications = specifications !== undefined ? specifications : product.specifications;
-    product.stock = stock ? Number(stock) : product.stock;
-
-    if (colors) {
-      try {
-        product.colors = typeof colors === 'string' ? JSON.parse(colors) : colors;
-      } catch (e) {
-        product.colors = colors.split(',').map(c => c.trim()).filter(Boolean);
-      }
-    }
-
-    let keepImages = [];
-    if (existingImages) {
-      try {
-        keepImages = typeof existingImages === 'string' ? JSON.parse(existingImages) : existingImages;
-      } catch (e) {
-        keepImages = [];
-      }
-    }
-
-    // Cloudinary URLs from req.files
-    let newImagePaths = [];
-    if (req.files && req.files.length > 0) {
-      newImagePaths = req.files.map((file) => file.path);
-    }
-
-    const allImages = [...keepImages, ...newImagePaths];
-    if (allImages.length > 0) {
-      product.image = allImages[0];
-      product.images = allImages;
-    }
-
-    const updatedProduct = await product.save();
-
-    const io = req.app.get('io');
-    io.emit('product_updated', updatedProduct);
-
-    res.json(updatedProduct);
-  } catch (error) {
-    console.error('Update product error:', error);
-    res.status(500).json({ message: error.message });
-  }
-};
-
-exports.deleteProduct = async (req, res) => {
-  try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
-    await Product.findByIdAndDelete(req.params.id);
-
-    const io = req.app.get('io');
-    io.emit('product_deleted', req.params.id);
-
-    res.json({ message: 'Product removed' });
-  } catch (error) {
-    res.status(500).json({ message: error.message });
-  }
-};
-
+// Get all products (admin)
 exports.getAllProductsAdmin = async (req, res) => {
   try {
     const products = await Product.find().sort({ createdAt: -1 });
+    console.log(`✅ Admin fetched ${products.length} products`);
     res.json(products);
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
 
-// ============= SOLD OUT FEATURE =============
-
-// Toggle Sold Out Status (Admin)
-exports.toggleSoldOut = async (req, res) => {
+// ============= CREATE PRODUCT =============
+exports.createProduct = async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
+    console.log('\n===== CREATE PRODUCT =====');
+    console.log('📝 Body keys:', Object.keys(req.body));
+    console.log('📁 Files count:', req.files?.length || 0);
+
+    const {
+      name, description, tagline, price, originalPrice, category, brand,
+      modelNumber, stock, specifications, colorVariants,
+      showcaseSections, sectionImageMapping, specGroups,
+    } = req.body;
+
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: 'Please upload at least one image' });
     }
 
-    const wasSoldOut = product.isSoldOut;
-    product.isSoldOut = !product.isSoldOut;
+    // Get all uploaded image paths
+    const allUploadedImages = req.files.map((file) => {
+      if (file.path && file.path.startsWith('http')) return file.path;
+      if (file.filename) return `/uploads/${file.filename}`;
+      return null;
+    }).filter(Boolean);
 
-    // If marking BACK in stock (was sold out, now available)
-    if (wasSoldOut && !product.isSoldOut && product.notifySubscribers.length > 0) {
-      // Send emails to all subscribers
-      const subscribers = [...product.notifySubscribers];
+    console.log('✅ Uploaded images:', allUploadedImages.length);
 
-      // Clear subscribers list
-      product.notifySubscribers = [];
-      await product.save();
+    // Parse color variants
+    let parsedColorVariants = [];
+    if (colorVariants) {
+      try {
+        const variants = typeof colorVariants === 'string'
+          ? JSON.parse(colorVariants)
+          : colorVariants;
 
-      // Send notification emails (async, don't wait)
-      sendBackInStockEmails(product, subscribers).catch((err) => {
-        console.error('Email sending error:', err);
-      });
+        parsedColorVariants = variants.map((variant) => ({
+          colorName: variant.colorName,
+          colorHex: variant.colorHex || '#000000',
+          images: (variant.imageIndices || []).map(idx => allUploadedImages[idx]).filter(Boolean),
+        }));
 
-      const io = req.app.get('io');
-      io.emit('product_updated', product);
-
-      return res.json({
-        ...product.toObject(),
-        notifiedCount: subscribers.length,
-        message: `Product is back in stock! ${subscribers.length} subscribers notified.`,
-      });
+        console.log('✅ Color variants:', parsedColorVariants.length);
+      } catch (e) {
+        console.log('⚠️ Color variants parse error:', e.message);
+      }
     }
 
-    await product.save();
+    // Parse spec groups
+    let parsedSpecGroups = [];
+    if (specGroups) {
+      try {
+        parsedSpecGroups = typeof specGroups === 'string'
+          ? JSON.parse(specGroups)
+          : specGroups;
+        console.log('✅ Spec groups:', parsedSpecGroups.length);
+      } catch (e) {
+        console.log('⚠️ Spec groups parse error:', e.message);
+      }
+    }
+
+    // Parse showcase sections
+    let parsedSections = [];
+    if (showcaseSections) {
+      try {
+        const sections = typeof showcaseSections === 'string'
+          ? JSON.parse(showcaseSections)
+          : showcaseSections;
+
+        const mapping = sectionImageMapping
+          ? (typeof sectionImageMapping === 'string' ? JSON.parse(sectionImageMapping) : sectionImageMapping)
+          : {};
+
+        parsedSections = sections.map((section, sectionIdx) => {
+          const imageIndices = mapping[sectionIdx] || [];
+          const newImages = imageIndices.map(idx => allUploadedImages[idx]).filter(Boolean);
+
+          return {
+            sectionType: section.sectionType || 'custom',
+            title: section.title || '',
+            subtitle: section.subtitle || '',
+            description: section.description || '',
+            images: [...(section.existingImages || []), ...newImages],
+            layout: section.layout || 'image-right',
+            backgroundColor: section.backgroundColor || '#f5f5f7',
+            textColor: section.textColor || '#1a1a2e',
+            order: section.order !== undefined ? section.order : sectionIdx,
+          };
+        });
+
+        console.log('✅ Showcase sections:', parsedSections.length);
+      } catch (e) {
+        console.log('⚠️ Showcase sections parse error:', e.message);
+      }
+    }
+
+    const simpleColors = parsedColorVariants.map(v => v.colorName);
+    const defaultImages = parsedColorVariants.length > 0 && parsedColorVariants[0].images.length > 0
+      ? parsedColorVariants[0].images
+      : allUploadedImages;
+
+    const product = await Product.create({
+      name,
+      description,
+      tagline: tagline || '',
+      price: Number(price),
+      originalPrice: originalPrice ? Number(originalPrice) : 0,
+      category,
+      brand: brand || '',
+      modelNumber: modelNumber || '',
+      specifications: specifications || '',
+      specGroups: parsedSpecGroups,
+      colors: simpleColors,
+      colorVariants: parsedColorVariants,
+      stock: stock ? Number(stock) : 10,
+      image: defaultImages[0],
+      images: defaultImages,
+      showcaseSections: parsedSections,
+      isSoldOut: false,
+      isActive: true,
+    });
+
+    console.log('✅ Product created with:');
+    console.log('   - Color variants:', product.colorVariants.length);
+    console.log('   - Showcase sections:', product.showcaseSections.length);
+    console.log('   - Spec groups:', product.specGroups.length);
+    console.log('===== CREATE COMPLETE =====\n');
 
     const io = req.app.get('io');
-    io.emit('product_updated', product);
+    if (io) io.emit('product_added', product);
 
-    res.json(product);
+    res.status(201).json(product);
   } catch (error) {
-    console.error('Toggle sold out error:', error);
+    console.error('❌ Create error:', error);
+    console.error('Stack:', error.stack);
     res.status(500).json({ message: error.message });
   }
 };
 
-// Subscribe to Notify Me
-exports.subscribeNotify = async (req, res) => {
+// ============= UPDATE PRODUCT =============
+exports.updateProduct = async (req, res) => {
   try {
-    const { email, name, userId } = req.body;
-    const product = await Product.findById(req.params.id);
+    console.log('\n===== UPDATE PRODUCT =====');
+    console.log('🆔 Product ID:', req.params.id);
+    console.log('📝 Body keys:', Object.keys(req.body));
+    console.log('📁 Files count:', req.files?.length || 0);
 
+    const product = await Product.findById(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Product not found' });
     }
 
-    if (!product.isSoldOut) {
-      return res.status(400).json({ message: 'Product is already in stock' });
+    const {
+      name, description, tagline, price, originalPrice, category, brand,
+      modelNumber, stock, specifications,
+      colorVariants, existingColorVariants,
+      showcaseSections, sectionImageMapping, specGroups,
+    } = req.body;
+
+    // Update basic fields
+    if (name) product.name = name;
+    if (description) product.description = description;
+    if (tagline !== undefined) product.tagline = tagline;
+    if (price) product.price = Number(price);
+    if (originalPrice !== undefined) product.originalPrice = Number(originalPrice);
+    if (category) product.category = category;
+    if (brand !== undefined) product.brand = brand;
+    if (modelNumber !== undefined) product.modelNumber = modelNumber;
+    if (specifications !== undefined) product.specifications = specifications;
+    if (stock) product.stock = Number(stock);
+
+    console.log('✅ Basic fields updated');
+
+    // ========== SPEC GROUPS ==========
+    if (specGroups !== undefined) {
+      try {
+        const parsedSpecs = typeof specGroups === 'string'
+          ? JSON.parse(specGroups)
+          : specGroups;
+
+        product.specGroups = parsedSpecs;
+        console.log('✅ Spec groups saved:', parsedSpecs.length);
+      } catch (e) {
+        console.log('⚠️ Spec groups parse error:', e.message);
+      }
     }
 
-    // Check if email already subscribed
+    // Get new uploaded images
+    const newUploadedImages = req.files && req.files.length > 0
+      ? req.files.map((file) => {
+          if (file.path && file.path.startsWith('http')) return file.path;
+          if (file.filename) return `/uploads/${file.filename}`;
+          return null;
+        }).filter(Boolean)
+      : [];
+
+    console.log('✅ New uploaded images:', newUploadedImages.length);
+
+    // ========== COLOR VARIANTS ==========
+    let keptVariants = [];
+    if (existingColorVariants) {
+      try {
+        keptVariants = typeof existingColorVariants === 'string'
+          ? JSON.parse(existingColorVariants)
+          : existingColorVariants;
+        console.log('✅ Kept existing variants:', keptVariants.length);
+      } catch (e) {
+        console.log('⚠️ existingColorVariants parse error:', e.message);
+      }
+    }
+
+    let newVariantsData = [];
+    if (colorVariants) {
+      try {
+        const variants = typeof colorVariants === 'string'
+          ? JSON.parse(colorVariants)
+          : colorVariants;
+
+        newVariantsData = variants.map((variant) => ({
+          colorName: variant.colorName,
+          colorHex: variant.colorHex || '#000000',
+          newImages: (variant.imageIndices || []).map(idx => newUploadedImages[idx]).filter(Boolean),
+        }));
+        console.log('✅ New variants data:', newVariantsData.length);
+      } catch (e) {
+        console.log('⚠️ colorVariants parse error:', e.message);
+      }
+    }
+
+    const finalVariants = keptVariants.map(kept => {
+      const matchingNew = newVariantsData.find(nv => nv.colorName === kept.colorName);
+      return {
+        colorName: kept.colorName,
+        colorHex: kept.colorHex,
+        images: [...(kept.images || []), ...(matchingNew ? matchingNew.newImages : [])],
+      };
+    });
+
+    newVariantsData.forEach(nv => {
+      const exists = keptVariants.find(k => k.colorName === nv.colorName);
+      if (!exists && nv.newImages.length > 0) {
+        finalVariants.push({
+          colorName: nv.colorName,
+          colorHex: nv.colorHex,
+          images: nv.newImages,
+        });
+      }
+    });
+
+    product.colorVariants = finalVariants;
+    product.colors = finalVariants.map(v => v.colorName);
+
+    if (finalVariants.length > 0 && finalVariants[0].images.length > 0) {
+      product.image = finalVariants[0].images[0];
+      product.images = finalVariants[0].images;
+    }
+
+    console.log('✅ Final color variants:', finalVariants.length);
+
+    // ========== SHOWCASE SECTIONS ==========
+    if (showcaseSections !== undefined) {
+      try {
+        const sections = typeof showcaseSections === 'string'
+          ? JSON.parse(showcaseSections)
+          : showcaseSections;
+
+        console.log('📸 Received sections:', sections.length);
+
+        const mapping = sectionImageMapping
+          ? (typeof sectionImageMapping === 'string' ? JSON.parse(sectionImageMapping) : sectionImageMapping)
+          : {};
+
+        console.log('🗺️ Section image mapping:', mapping);
+
+        const finalSections = sections.map((section, sectionIdx) => {
+          const imageIndices = mapping[sectionIdx] || [];
+          const newImages = imageIndices.map(idx => newUploadedImages[idx]).filter(Boolean);
+
+          console.log(`  Section ${sectionIdx}:`, {
+            title: section.title,
+            existing: section.existingImages?.length || 0,
+            new: newImages.length,
+          });
+
+          return {
+            sectionType: section.sectionType || 'custom',
+            title: section.title || '',
+            subtitle: section.subtitle || '',
+            description: section.description || '',
+            images: [...(section.existingImages || []), ...newImages],
+            layout: section.layout || 'image-right',
+            backgroundColor: section.backgroundColor || '#f5f5f7',
+            textColor: section.textColor || '#1a1a2e',
+            order: section.order !== undefined ? section.order : sectionIdx,
+          };
+        });
+
+        product.showcaseSections = finalSections;
+        console.log('✅ Showcase sections saved:', finalSections.length);
+      } catch (e) {
+        console.log('⚠️ Showcase sections parse error:', e.message);
+        console.log('Received value:', showcaseSections);
+      }
+    } else {
+      console.log('⚠️ No showcaseSections in request body');
+    }
+
+    console.log('💾 Saving product...');
+    const updatedProduct = await product.save();
+
+    console.log('✅ Saved product summary:');
+    console.log('   - Name:', updatedProduct.name);
+    console.log('   - Color variants:', updatedProduct.colorVariants.length);
+    console.log('   - Showcase sections:', updatedProduct.showcaseSections.length);
+    console.log('   - Spec groups:', updatedProduct.specGroups.length);
+    console.log('===== UPDATE COMPLETE =====\n');
+
+    const io = req.app.get('io');
+    if (io) io.emit('product_updated', updatedProduct);
+
+    res.json(updatedProduct);
+  } catch (error) {
+    console.error('❌ Update error:', error);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Delete product
+exports.deleteProduct = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    await Product.findByIdAndDelete(req.params.id);
+    const io = req.app.get('io');
+    if (io) io.emit('product_deleted', req.params.id);
+    res.json({ message: 'Product removed' });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Toggle sold out
+exports.toggleSoldOut = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+
+    const wasSoldOut = product.isSoldOut;
+    product.isSoldOut = !product.isSoldOut;
+
+    if (wasSoldOut && !product.isSoldOut && product.notifySubscribers?.length > 0) {
+      const subscribers = [...product.notifySubscribers];
+      product.notifySubscribers = [];
+      await product.save();
+
+      const io = req.app.get('io');
+      if (io) io.emit('product_updated', product);
+
+      return res.json({
+        ...product.toObject(),
+        notifiedCount: subscribers.length,
+        message: `${subscribers.length} subscribers notified.`,
+      });
+    }
+
+    await product.save();
+    const io = req.app.get('io');
+    if (io) io.emit('product_updated', product);
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// Subscribe notify
+exports.subscribeNotify = async (req, res) => {
+  try {
+    const { email, name, userId } = req.body;
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ message: 'Product not found' });
+    if (!product.isSoldOut) return res.status(400).json({ message: 'Product is in stock' });
+
+    if (!product.notifySubscribers) product.notifySubscribers = [];
+
     const alreadySubscribed = product.notifySubscribers.find(
       (sub) => sub.email.toLowerCase() === email.toLowerCase()
     );
 
     if (alreadySubscribed) {
-      return res.status(400).json({ message: 'You are already subscribed for notifications' });
+      return res.status(400).json({ message: 'Already subscribed' });
     }
 
     product.notifySubscribers.push({
@@ -252,160 +447,22 @@ exports.subscribeNotify = async (req, res) => {
     });
 
     await product.save();
-
-    // Send confirmation email
-    try {
-      await sendSubscriptionEmail(product, email, name);
-    } catch (emailError) {
-      console.log('Confirmation email failed:', emailError.message);
-    }
-
-    res.json({
-      message: 'You will be notified when this product is back in stock!',
-      subscribersCount: product.notifySubscribers.length,
-    });
+    res.json({ message: 'Subscribed successfully!' });
   } catch (error) {
-    console.error('Subscribe error:', error);
     res.status(500).json({ message: error.message });
   }
 };
 
-// ============= EMAIL HELPER FUNCTIONS =============
-
-// Send confirmation email when user subscribes
-const sendSubscriptionEmail = async (product, email, name) => {
-  const productImage = product.image?.startsWith('http')
-    ? product.image
-    : `${process.env.FRONTEND_URL?.replace('5173', '5000')}${product.image}`;
-
-  await transporter.sendMail({
-    from: `"THE ACCESSORIES LAB" <${process.env.SMTP_USER}>`,
-    to: email,
-    subject: `Notification Set ✓ - ${product.name}`,
-    html: `
-      <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0a0a0f; border-radius: 20px; overflow: hidden;">
-        <div style="background: linear-gradient(135deg, #e94560, #c23152); padding: 40px; text-align: center;">
-          <div style="font-size: 60px; margin-bottom: 10px;">🔔</div>
-          <h1 style="color: #fff; margin: 0; font-size: 28px;">You're on the List!</h1>
-        </div>
-
-        <div style="padding: 30px;">
-          <p style="color: #fff; font-size: 18px; text-align: center;">
-            Hi <strong>${name || 'there'}</strong>,
-          </p>
-
-          <p style="color: #ccc; font-size: 16px; text-align: center; line-height: 1.6;">
-            We'll notify you as soon as <strong style="color: #e94560;">${product.name}</strong> is back in stock!
-          </p>
-
-          <div style="background: #12122a; border-radius: 15px; padding: 20px; margin: 25px 0; text-align: center;">
-            <p style="color: #e94560; font-size: 14px; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 2px;">Product</p>
-            <h2 style="color: #fff; margin: 0 0 10px 0; font-size: 22px;">${product.name}</h2>
-            <p style="color: #888; margin: 0 0 15px 0;">${product.brand || 'Premium'}</p>
-            <div style="background: #e94560; display: inline-block; padding: 8px 20px; border-radius: 8px;">
-              <span style="color: #fff; font-weight: bold;">Rs. ${product.price.toLocaleString()}</span>
-            </div>
-          </div>
-
-          <p style="color: #ccc; text-align: center; font-size: 14px;">
-            You'll receive an email the moment this product becomes available again.
-          </p>
-
-          <div style="text-align: center; margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}" style="display: inline-block; background: #e94560; color: white; padding: 14px 30px; border-radius: 10px; text-decoration: none; font-weight: bold;">
-              Explore More Products
-            </a>
-          </div>
-
-          <p style="text-align: center; margin-top: 25px; color: #555; font-size: 12px;">
-            THE ACCESSORIES LAB | WhatsApp: 0342-7600786
-          </p>
-        </div>
-      </div>
-    `,
-  });
-};
-
-// Send back-in-stock emails to all subscribers
-const sendBackInStockEmails = async (product, subscribers) => {
-  const productLink = `${process.env.FRONTEND_URL}/product/${product._id}`;
-
-  for (const subscriber of subscribers) {
-    try {
-      await transporter.sendMail({
-        from: `"THE ACCESSORIES LAB" <${process.env.SMTP_USER}>`,
-        to: subscriber.email,
-        subject: `🎉 Back in Stock - ${product.name}`,
-        html: `
-          <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #0a0a0f; border-radius: 20px; overflow: hidden;">
-            <div style="background: linear-gradient(135deg, #27ae60, #2ecc71); padding: 40px; text-align: center;">
-              <div style="font-size: 60px; margin-bottom: 10px;">🎉</div>
-              <h1 style="color: #fff; margin: 0; font-size: 28px;">Back in Stock!</h1>
-            </div>
-
-            <div style="padding: 30px;">
-              <p style="color: #fff; font-size: 18px; text-align: center;">
-                Hi <strong>${subscriber.name || 'there'}</strong>,
-              </p>
-
-              <p style="color: #ccc; font-size: 16px; text-align: center; line-height: 1.6; margin-bottom: 25px;">
-                Great news! The product you wanted is now available.
-              </p>
-
-              <div style="background: linear-gradient(135deg, #12122a, #1a1a3e); border-radius: 15px; padding: 25px; margin: 25px 0; text-align: center; border: 2px solid #27ae60;">
-                <p style="color: #27ae60; font-size: 12px; margin: 0 0 10px 0; text-transform: uppercase; letter-spacing: 3px; font-weight: bold;">Available Now</p>
-                <h2 style="color: #fff; margin: 0 0 10px 0; font-size: 24px;">${product.name}</h2>
-                <p style="color: #888; margin: 0 0 20px 0; font-size: 14px;">${product.brand || 'Premium Quality'}</p>
-
-                <div style="background: #e94560; display: inline-block; padding: 12px 30px; border-radius: 10px; margin-bottom: 20px;">
-                  <span style="color: #fff; font-weight: bold; font-size: 22px;">Rs. ${product.price.toLocaleString()}</span>
-                </div>
-
-                <p style="color: #ccc; margin: 0; font-size: 14px;">
-                  ⚡ Limited stock available - Order now!
-                </p>
-              </div>
-
-              <div style="text-align: center; margin-top: 30px;">
-                <a href="${productLink}" style="display: inline-block; background: linear-gradient(135deg, #e94560, #c23152); color: white; padding: 18px 40px; border-radius: 12px; text-decoration: none; font-weight: bold; font-size: 16px; box-shadow: 0 10px 20px rgba(233,69,96,0.3);">
-                  🛒 Shop Now
-                </a>
-              </div>
-
-              <div style="margin-top: 30px; padding: 20px; background: #12122a; border-radius: 12px; text-align: center;">
-                <p style="color: #e94560; font-weight: bold; margin: 0 0 10px 0; font-size: 14px;">⏰ Don't Wait!</p>
-                <p style="color: #888; margin: 0; font-size: 13px;">
-                  Popular items sell out quickly. Place your order today to avoid disappointment.
-                </p>
-              </div>
-
-              <p style="text-align: center; margin-top: 25px; color: #555; font-size: 12px;">
-                THE ACCESSORIES LAB | WhatsApp: 0342-7600786<br>
-                You received this because you subscribed to be notified.
-              </p>
-            </div>
-          </div>
-        `,
-      });
-      console.log(`✅ Back-in-stock email sent to ${subscriber.email}`);
-    } catch (error) {
-      console.error(`❌ Failed to send email to ${subscriber.email}:`, error.message);
-    }
-  }
-};
-
-// Get notify subscribers (Admin)
+// Get subscribers
 exports.getNotifySubscribers = async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
-    if (!product) {
-      return res.status(404).json({ message: 'Product not found' });
-    }
+    if (!product) return res.status(404).json({ message: 'Product not found' });
     res.json({
       productName: product.name,
       isSoldOut: product.isSoldOut,
-      subscribers: product.notifySubscribers,
-      count: product.notifySubscribers.length,
+      subscribers: product.notifySubscribers || [],
+      count: (product.notifySubscribers || []).length,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });

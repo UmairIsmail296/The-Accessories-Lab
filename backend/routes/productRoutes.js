@@ -14,7 +14,7 @@ router.get('/admin/all', protectAdmin, getAllProductsAdmin);
 router.get('/:id', getProductById);
 
 // Use uploadProduct for Cloudinary
-router.post('/', protectAdmin, uploadProduct.array('images', 10), createProduct);
+router.post('/', protectAdmin, uploadProduct.array('images', 100), createProduct);
 router.put('/:id', protectAdmin, uploadProduct.array('images', 10), updateProduct);
 router.delete('/:id', protectAdmin, deleteProduct);
 
